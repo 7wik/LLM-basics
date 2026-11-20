@@ -32,10 +32,16 @@ class KVCache:
         k_new, v_new: (m, d_model) - m = n for prefill, m = 1 for decode.
         Adds m rows to the end of the cache.
         """
+        k_new = np.atleast_2d(k_new)
+        v_new = np.atleast_2d(v_new)
+
+        if len(self) + k_new.shape[0] > self.max_len:
+            raise ValueError(
+                f"appending {k_new.shape[0]} tokens to {len(self)} would exceed max_len={self.max_len}"
+            )
+
         self.cache[0] = np.concatenate([self.cache[0], k_new], axis=0)
         self.cache[1] = np.concatenate([self.cache[1], v_new], axis=0)
-        if len(self) > self.max_len:
-            raise ValueError(f"KVCache exceeded max_len={self.max_len}.")
 
     def get(self):
         """
@@ -57,14 +63,30 @@ def prefill(attn: SelfAttention, X_prompt, cache: KVCache):
 
     Returns:  (n, d_model) -- must equal attn.forward(X_prompt) exactly
     """
-    # 1. compute Q, K, V for all prompt tokens
-    # 2. store K, V in the cache
-    # 3. attend (which K, V? and which mask?)
-    # 4. apply the output projection
+    assert len(cache) == 0, "prefill expects an empty cache"
     Q = X_prompt @ attn.W_Q
     K = X_prompt @ attn.W_K
     V = X_prompt @ attn.W_V
     cache.append(K, V)
     mask = causal_mask(Q.shape[0])
     output, _ = scaled_dot_product_attention(Q, K, V, mask=mask)
+    return output @ attn.W_O
+
+def decode(attn: SelfAttention, x_new, cache: KVCache):
+    """
+    Process one new token, attend over the cached keys and values, and append the new k/v to the cache.
+
+    attn:   a SelfAttention layer (weights: attn.W_Q, attn.W_K, attn.W_V, attn.W_O)
+    x_new:  (1, d_model) -- the new token's embedding
+    cache:  a KVCache that already contains the prompt's keys and values
+
+    Returns: (1, d_model) -- the output for this new token
+    """
+    assert len(x_new.shape) == 2 and x_new.shape[0] == 1, "x_new must be shape (1, d_model)"
+    Q = x_new @ attn.W_Q
+    K = x_new @ attn.W_K
+    V = x_new @ attn.W_V
+    cache.append(K, V)
+    K_cache, V_cache = cache.get()
+    output, _ = scaled_dot_product_attention(Q, K_cache, V_cache, mask=None)
     return output @ attn.W_O

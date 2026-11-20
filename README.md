@@ -20,12 +20,12 @@ ingredient changed, several seeds. See [Experiments](#experiments-what-does-each
 ### KV cache: core
 - [x] `KVCache` container (list of 2 arrays, grown with `np.concatenate`)
 - [x] Prefill: process the prompt in parallel and fill the cache
-- [ ] Fix: check `max_len` *before* modifying the cache, plus a test that a failed append leaves it unchanged
-- [ ] Fix: `prefill` asserts the cache is empty
-- [ ] Shape handling: `append` accepts `(d,)` or `(m, d)` via `np.atleast_2d`
-- [ ] Decode: one token at a time, attending over the whole cache (no mask)
-- [ ] Equivalence test: prefill + decode == full causal forward (several prefill splits)
-- [ ] See the equivalence test fail (decode using local k/v instead of the cache)
+- [x] Fix: check `max_len` *before* modifying the cache, plus a test that a failed append leaves it unchanged
+- [x] Fix: `prefill` asserts the cache is empty
+- [x] Shape handling: `append` accepts `(d,)` or `(m, d)` via `np.atleast_2d`
+- [x] Decode: one token at a time, attending over the whole cache (no mask)
+- [x] Equivalence test: prefill + decode == full causal forward (several prefill splits)
+- [x] See the equivalence test fail (decode using local k/v instead of the cache)
 
 ### Optional: pretrained GPT-2 on my NumPy engine, deployed to Hugging Face Spaces
 - [ ] Decide who writes the plumbing (weight loading, tokenizer wiring, web app, deploy config): me, or split with Claude
