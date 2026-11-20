@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from attention_basics import SelfAttention, causal_mask, scaled_dot_product_attention, softmax
+from attention import SelfAttention, causal_mask, scaled_dot_product_attention, softmax
 
 
 @pytest.fixture
