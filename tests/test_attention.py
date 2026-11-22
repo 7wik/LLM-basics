@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from attention import SelfAttention, causal_mask, scaled_dot_product_attention, softmax
+from attention import SelfAttention, causal_mask, scaled_dot_product_attention, softmax, split_heads, combine_heads
 
 
 @pytest.fixture
@@ -93,3 +93,47 @@ def test_self_attention_is_causal(rng):
         for i in range(j, n):
             assert not np.allclose(out[i], out2[i]), \
                 f"perturbed row {j}: output row {i} didn't change"
+
+
+# --- attention over extra leading axes (heads, batch) -------------------------------
+
+def test_attention_3d_matches_per_head_2d(rng):
+    """(H, n, d) input == running the 2-D function on each head separately."""
+    H, n, d = 2, 5, 4
+    Q, K, V = (rng.standard_normal((H, n, d)) for _ in range(3))
+    mask = causal_mask(n)
+
+    out, w = scaled_dot_product_attention(Q, K, V, mask=mask)
+    assert out.shape == (H, n, d)
+    assert w.shape == (H, n, n)
+    for h in range(H):
+        out_h, w_h = scaled_dot_product_attention(Q[h], K[h], V[h], mask=mask)
+        assert np.allclose(out[h], out_h), f"head {h}: output differs from 2-D version"
+        assert np.allclose(w[h], w_h), f"head {h}: weights differ from 2-D version"
+
+
+def test_attention_4d_batch_and_heads(rng):
+    """(B, H, n, d) works too, with no code changes, if only the last two axes are touched."""
+    B, H, n, d = 3, 2, 5, 4
+    Q, K, V = (rng.standard_normal((B, H, n, d)) for _ in range(3))
+    out, w = scaled_dot_product_attention(Q, K, V, mask=causal_mask(n))
+    assert out.shape == (B, H, n, d)
+    assert np.allclose(w.sum(axis=-1), 1.0)
+    out_b1_h0, _ = scaled_dot_product_attention(Q[1, 0], K[1, 0], V[1, 0], mask=causal_mask(n))
+    assert np.allclose(out[1, 0], out_b1_h0)
+
+def test_split_and_combine_heads(rng):
+    """split_heads and combine_heads are inverses, and each head owns its slice of dims."""
+    B, H, n, d = 3, 2, 5, 4
+    X = rng.standard_normal((B, n, H * d))
+    X_split = split_heads(X, H)
+    assert X_split.shape == (B, H, n, d)
+
+    # head ownership: head h holds dims [h*d, (h+1)*d) of EVERY token.
+    # A round trip alone can't catch a wrong reshape: two wrong functions can undo each other.
+    for h in range(H):
+        assert np.allclose(X_split[:, h], X[..., h * d:(h + 1) * d]), \
+            f"head {h} must own dims {h * d}..{(h + 1) * d - 1} of every token"
+
+    X_combined = combine_heads(X_split)
+    assert np.allclose(X, X_combined), "combine_heads(split_heads(X)) != X"

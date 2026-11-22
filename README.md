@@ -27,6 +27,18 @@ ingredient changed, several seeds. See [Experiments](#experiments-what-does-each
 - [x] Equivalence test: prefill + decode == full causal forward (several prefill splits)
 - [x] See the equivalence test fail (decode using local k/v instead of the cache)
 
+### Attention variants (high priority, NumPy engine)
+Schedule: multi-head + GQA/MQA on 2026-11-20 (morning); the rest after E4.
+Each variant gets a test against plain attention (same output, or the expected difference), and works with the KV cache.
+- [ ] (2026-11-20) Multi-head attention: split -> attend per head -> concat -> `W_o`; KV cache stores `(n_heads, L, d_head)`
+- [ ] (2026-11-20) Grouped-query / multi-query attention (GQA / MQA): several query heads share one K/V head; measure the cache shrink
+- [ ] RoPE positional encoding: rotate q/k by position; cached keys stay valid, decode uses position = cache length
+- [ ] Sliding-window attention: band mask in prefill, cache capped at the last W tokens in decode
+- [ ] FlashAttention-style tiling: blockwise attention with online softmax, never builds the `(n, n)` matrix; must match plain attention
+- [ ] Multi-head latent attention (MLA, DeepSeek): cache one compressed latent per token, expand to K/V on the fly; compare cache size with GQA
+- [ ] Cross-attention: queries from one sequence, keys/values from another (`n_q != n_k`, no causal mask)
+- [ ] Stretch: run SmolLM-135M (Llama-style: RoPE + GQA + RMSNorm + SwiGLU) on the same engine
+
 ### Optional: pretrained GPT-2 on my NumPy engine, deployed to Hugging Face Spaces
 - [ ] Decide who writes the plumbing (weight loading, tokenizer wiring, web app, deploy config): me, or split with Claude
 - [ ] Multi-head attention (GPT-2 small: 12 heads × 64 dims), split the packed QKV matrix `c_attn` into Q, K, V
@@ -45,13 +57,6 @@ ingredient changed, several seeds. See [Experiments](#experiments-what-does-each
 - [ ] Naive greedy generation (recompute everything each step)
 - [ ] Cached generation, with identical tokens to naive
 - [ ] Count the work: positions processed by naive vs. cached generation
-
-### Attention variants
-- [ ] Multi-head attention (split -> attend -> concat -> `W_o`), done as part of the GPT-2 milestone
-- [ ] Grouped-query / multi-query attention (GQA / MQA): fewer K/V heads, smaller cache
-- [ ] RoPE positional encoding (rotate q/k by position; cached keys stay valid)
-- [ ] Sliding-window attention (cache capped at the last W tokens)
-- [ ] Stretch: run SmolLM-135M (Llama-style: RoPE + GQA + RMSNorm + SwiGLU) on the same engine
 
 ### KV cache: how real systems manage memory
 - [ ] KV cache memory math: bytes per token for a real model (e.g. Llama-2-7B vs. Llama-3-8B with GQA)
@@ -91,12 +96,18 @@ Every result: matched parameter count, same training budget, mean ± std over 3 
 - [ ] Datasets: Tiny Shakespeare (character level) + synthetic tasks (associative recall, induction/copy, multi-digit addition)
 - [ ] Results table + loss-curve plots in `results/`
 
-### E1. Does attention help? (target: 2026-11-20)
-- [ ] Baselines: bigram (counts), MLP over a fixed window of k tokens
-- [ ] Tiny transformer with matched parameter count
-- [ ] Tiny Shakespeare: validation loss + samples for each model
+### E1. Does attention help? (2026-11-20 afternoon: setup + bigram + MLP; 2026-11-21: transformer + results)
+- [ ] Decide who writes the plumbing (data, training loop, logging, plots); install PyTorch
+- [ ] `experiments/data.py`: Tiny Shakespeare download, char tokenizer, batches, associative-recall generator
+- [ ] `experiments/train.py`: one run = model + seed + task -> losses saved as JSON
+- [ ] Bigram (65×65 logits table, ~4K params): val loss ≈ 2.5
+- [ ] MLP, window 16 and window 64 (~200K params each; params grow with the window)
+- [ ] Tiny transformer (2 layers, d≈96, 4 heads, context 64, ~200K params)
+- [ ] Sanity: every model overfits one batch to ~0 loss before any real run
+- [ ] Grid: every model × 3 seeds × 3 learning rates, same steps, batch size, optimizer
+- [ ] Tiny Shakespeare: results table (val loss mean ± std) + text samples, side by side
 - [ ] Associative recall (`a:3 k:7 z:1 ... k? -> 7`): accuracy vs. distance between key and query
-- [ ] Induction (`... A B ... A -> B`) and length generalization (train on 32, test on 64)
+- [ ] (Drop first if short on time) Induction (`... A B ... A -> B`) and length generalization (train on 32, test on 64)
 
 ### E2. Which transformer parts matter? (ablations)
 - [ ] No causal mask: training loss looks great, generation breaks (the model was reading the answer)
@@ -108,12 +119,33 @@ Every result: matched parameter count, same training budget, mean ± std over 3 
 - [ ] Small scaling curve: validation loss vs. parameters, and vs. amount of data
 - [ ] Pretrain on raw text, then fine-tune on a small task set vs. training on that task set from scratch (sample efficiency)
 
-### E4. Does RL help?
-- [ ] Task with a verifiable reward (multi-digit addition: reward = 1 if the answer is exactly right)
-- [ ] Supervised fine-tuning (SFT) baseline: accuracy (pass@1) and pass@k
-- [ ] RL on top of SFT: REINFORCE with a baseline, then a GRPO-style group-normalized advantage, plus a KL penalty to the SFT model
-- [ ] Measure: does pass@1 go up? Does pass@k? (Does RL teach new skills, or sharpen ones the model already had?)
-- [ ] Reward hacking: weaken the reward check on purpose and watch the policy exploit it
+### E4. Does RL with verifiable rewards (RLVR) help? (target: 2026-11-22) -- package `rlvr/`
+Every algorithm shares the same loop (sample k answers per prompt -> verify -> advantages -> update);
+they differ only in how advantages and the loss are computed, so each one is a small, testable function.
+
+**Package**
+- [ ] `rlvr/tasks.py`: multi-digit addition prompts (`"123+456="`) + exact-match verifier (reward 1/0); a deliberately "hackable" verifier variant
+- [ ] `rlvr/sampling.py`: sample k completions per prompt, keep per-token log-probs (old policy and reference model)
+- [ ] `rlvr/advantages.py`: one pure function per algorithm, `rewards (B, k) -> advantages`, unit-tested on hand-computed examples
+- [ ] `rlvr/losses.py`: policy-gradient loss, PPO-style clipped surrogate, KL-to-reference estimators
+- [ ] `rlvr/metrics.py`: pass@1, unbiased pass@k, mean reward, KL to the SFT model, entropy, answer length
+- [ ] `rlvr/trainer.py`: the shared loop + algorithm registry (`--algo grpo`)
+
+**Algorithms** (same rollout budget for all)
+- [ ] REINFORCE (no baseline): the high-variance reference point
+- [ ] REINFORCE + moving-average baseline
+- [ ] RLOO: leave-one-out baseline over the k samples
+- [ ] GRPO: group-normalized advantages (mean/std), clipped ratio, KL penalty
+- [ ] Dr. GRPO: GRPO without the std and length normalization
+- [ ] Stretch: PPO with a learned value head (GAE)
+
+**Experiment**
+- [ ] SFT base model: a tiny transformer from E1 trained on addition, deliberately stopped at ~30-60% pass@1 so RL has room to improve
+- [ ] RL vs. *more SFT* for the same compute (the control: does RL beat just training longer?)
+- [ ] Compare algorithms: reward curves, pass@1 and pass@k (k = 1, 4, 16), KL, entropy, stability across 3 seeds
+- [ ] Does RL teach new skills or sharpen existing ones? (pass@1 up while pass@16 stays flat = sharpening)
+- [ ] Harder held-out problems (more digits than seen in SFT): does RL help generalization?
+- [ ] Reward hacking: train against the hackable verifier, watch the policy exploit it
 
 ### E5. Do the inference tricks help?
 - [ ] KV cache: tokens/sec and FLOPs, naive vs. cached generation, as context grows (outputs identical)
@@ -129,6 +161,9 @@ Every result: matched parameter count, same training budget, mean ± std over 3 
 | `attention.py` | softmax, causal mask, attention, `SelfAttention` |
 | `kv_cache.py` | KV cache, prefill, decode |
 | `generation.py` | tiny LM, naive vs. cached generation |
+| `experiments/` | PyTorch models + training harness for E1-E3 (`data.py`, `models.py`, `train.py`) |
+| `rlvr/` | RL with verifiable rewards: tasks, sampling, advantages, losses, metrics, trainer |
+| `results/` | experiment outputs (JSON + plots) |
 | `tests/` | pytest suite, one file per module |
 | `notes/` | concepts and "why" answers, in my own words |
 
