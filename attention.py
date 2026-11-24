@@ -136,3 +136,90 @@ class SelfAttention:
         mask = causal_mask(Q.shape[0])
         output, _ = scaled_dot_product_attention(Q, K, V, mask=mask)
         return output @ self.W_O
+
+class MultiHeadAttention:
+    """
+    Multi-head causal self-attention: Q, K and V all come from the same input X.
+
+        out = concat(head_1, ..., head_H) @ W_O
+        head_h = attention(X @ W_Q_h, X @ W_K_h, X @ W_V_h, causal_mask)
+    """
+
+    def __init__(self, d_model, n_heads, rng):
+        """
+        d_model: width of the input and of the output
+        n_heads: number of attention heads
+        rng:     a NumPy random generator (np.random.default_rng(seed));
+                 weights are drawn as standard_normal / sqrt(d_model)
+                 so activations keep roughly unit variance
+        """
+        assert d_model % n_heads == 0
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
+
+        self.W_Q = rng.standard_normal((d_model, d_model)) / np.sqrt(d_model)
+        self.W_K = rng.standard_normal((d_model, d_model)) / np.sqrt(d_model)
+        self.W_V = rng.standard_normal((d_model, d_model)) / np.sqrt(d_model)
+        self.W_O = rng.standard_normal((d_model, d_model)) / np.sqrt(d_model)
+
+    def forward(self, X):
+        """
+        Full causal pass over a whole sequence (no cache).
+        """
+        Q = split_heads(X @ self.W_Q, self.n_heads)
+        K = split_heads(X @ self.W_K, self.n_heads)
+        V = split_heads(X @ self.W_V, self.n_heads)
+        
+        mask = causal_mask(Q.shape[-2])
+        output, _ = scaled_dot_product_attention(Q, K, V, mask=mask)
+        return combine_heads(output) @ self.W_O
+
+class GroupedQueryAttention:
+    def __init__(self, d_model, n_heads, n_kv_heads, rng):
+        """
+        d_model: width of the input and of the output
+        n_heads: number of query heads
+        n_kv_heads: number of key/value heads (<= n_heads)
+        rng:     a NumPy random generator (np.random.default_rng(seed));
+                 weights are drawn as standard_normal / sqrt(d_model)
+                 so activations keep roughly unit variance
+        """
+        assert d_model % n_heads == 0
+        assert d_model % n_kv_heads == 0
+        self.d_model = d_model
+        self.n_heads = n_heads # number of query heads
+        self.n_kv_heads = n_kv_heads # number of key/value heads
+        assert n_kv_heads <= n_heads, "number of key/value \
+            heads must be less than or equal to number of query heads"
+        self.d_head = d_model // n_heads
+        self.d_kv_head = d_model // n_kv_heads
+
+        self.W_Q = rng.standard_normal((d_model, d_model)) / np.sqrt(d_model) # d_model x d_model
+        self.W_K = rng.standard_normal((d_model, n_kv_heads * self.d_head)) / np.sqrt(d_model) # d_model x (n_kv_heads * d_head)
+        self.W_V = rng.standard_normal((d_model, n_kv_heads * self.d_head)) / np.sqrt(d_model) # d_model x (n_kv_heads * d_head)
+        self.W_O = rng.standard_normal((d_model, d_model)) / np.sqrt(d_model)
+
+
+    def forward(self, X):   # (n, d_model) -> (n, d_model)
+        """
+        Full causal pass over a whole sequence (no cache).
+        """
+        Q = split_heads(X @ self.W_Q, self.n_heads)  # (H, n, d_head)
+        K = split_heads(X @ self.W_K, self.n_kv_heads)  # (H_kv, n, d_kv_head)
+        V = split_heads(X @ self.W_V, self.n_kv_heads)  # (H_kv, n, d_kv_head)
+
+        # Repeat K and V to match the number of query heads
+        K = np.repeat(K, self.n_heads // self.n_kv_heads, axis=-3)  # (H, n, d_kv_head)
+        V = np.repeat(V, self.n_heads // self.n_kv_heads, axis=-3)  # (H, n, d_kv_head)
+        # breakpoint()
+
+        mask = causal_mask(Q.shape[-2])
+        output, _ = scaled_dot_product_attention(Q, K, V, mask=mask)
+        return combine_heads(output) @ self.W_O
+
+if __name__ == "__main__":
+    import pytest
+    gqa = GroupedQueryAttention(d_model=8, n_heads=2, n_kv_heads=1, rng=np.random.default_rng(42))
+    gqa.forward(np.random.standard_normal((5, 8)))
+

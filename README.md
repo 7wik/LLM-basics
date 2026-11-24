@@ -40,7 +40,7 @@ Each variant gets a test against plain attention (same output, or the expected d
 - [ ] Stretch: run SmolLM-135M (Llama-style: RoPE + GQA + RMSNorm + SwiGLU) on the same engine
 
 ### Optional: pretrained GPT-2 on my NumPy engine, deployed to Hugging Face Spaces
-- [ ] Decide who writes the plumbing (weight loading, tokenizer wiring, web app, deploy config): me, or split with Claude
+- [x] Decide who writes the plumbing (weight loading, tokenizer wiring, web app, deploy config): Claude writes it, I read and review each step
 - [ ] Multi-head attention (GPT-2 small: 12 heads × 64 dims), split the packed QKV matrix `c_attn` into Q, K, V
 - [ ] Remaining GPT-2 layers: token + learned position embeddings, LayerNorm, GELU MLP, pre-LN transformer block with residuals
 - [ ] Stack 12 blocks + final LayerNorm + tied LM head (`h @ wte.T`)
@@ -97,7 +97,8 @@ Every result: matched parameter count, same training budget, mean ± std over 3 
 - [ ] Results table + loss-curve plots in `results/`
 
 ### E1. Does attention help? (2026-11-20 afternoon: setup + bigram + MLP; 2026-11-21: transformer + results)
-- [ ] Decide who writes the plumbing (data, training loop, logging, plots); install PyTorch
+- [x] Decide who writes the plumbing: Claude writes it in small steps, I read and review each step (with questions) before moving on
+- [ ] Install PyTorch
 - [ ] `experiments/data.py`: Tiny Shakespeare download, char tokenizer, batches, associative-recall generator
 - [ ] `experiments/train.py`: one run = model + seed + task -> losses saved as JSON
 - [ ] Bigram (65×65 logits table, ~4K params): val loss ≈ 2.5

@@ -1,7 +1,16 @@
 import numpy as np
 import pytest
 
-from attention import SelfAttention, causal_mask, scaled_dot_product_attention, softmax, split_heads, combine_heads
+from attention import (
+    SelfAttention,
+    MultiHeadAttention,
+    GroupedQueryAttention,
+    causal_mask, 
+    scaled_dot_product_attention, 
+    softmax, 
+    split_heads, 
+    combine_heads,
+)
 
 
 @pytest.fixture
@@ -137,3 +146,79 @@ def test_split_and_combine_heads(rng):
 
     X_combined = combine_heads(X_split)
     assert np.allclose(X, X_combined), "combine_heads(split_heads(X)) != X"
+
+def test_one_multihead_attention_matches_self_attention(rng):
+    """A single-head MultiHeadAttention == SelfAttention with the same weights."""
+    d_model = 8
+    n = 5
+    X = rng.standard_normal((n, d_model))
+    sa  = SelfAttention(d_model, rng)
+    mha = MultiHeadAttention(d_model, n_heads=1, rng=rng)
+    mha.W_Q, mha.W_K, mha.W_V, mha.W_O = sa.W_Q, sa.W_K, sa.W_V, sa.W_O   # same weights
+    assert np.allclose(mha.forward(X), sa.forward(X))
+
+def test_multihead_attention(rng):
+    """MultiHeadAttention with H heads == running H SelfAttention layers in parallel."""
+    d_model, n_heads, n = 8, 2, 5
+    X = rng.standard_normal((n, d_model))
+    mha = MultiHeadAttention(d_model, n_heads=n_heads, rng=rng)
+    mha.W_O = np.eye(d_model)  # so we can check each head's output directly
+    out_mha = mha.forward(X)
+
+    # run each head separately and concat the outputs
+    outs = []
+    for h in range(n_heads):
+        sa_h = SelfAttention(d_model // n_heads, rng)
+        sa_h.W_Q = mha.W_Q[:, h * sa_h.d_model:(h + 1) * sa_h.d_model]
+        sa_h.W_K = mha.W_K[:, h * sa_h.d_model:(h + 1) * sa_h.d_model]
+        sa_h.W_V = mha.W_V[:, h * sa_h.d_model:(h + 1) * sa_h.d_model]
+        sa_h.W_O = np.eye(d_model // n_heads)
+        out_h = sa_h.forward(X)
+        outs.append(out_h)
+    out_concat = np.concatenate(outs, axis=-1)
+    assert np.allclose(out_mha, out_concat), "multi-head output must match concatenated single-head outputs"
+
+def test_grouped_query_attention_same_as_mha(rng):
+    """GroupedQueryAttention with kv_heads = n_heads == MultiHeadAttention with the same weights."""
+    d_model, n_heads, n = 8, 2, 5
+    X = rng.standard_normal((n, d_model))
+    mha = MultiHeadAttention(d_model, n_heads=n_heads, rng=rng)
+    gqa = GroupedQueryAttention(d_model, n_heads=n_heads, n_kv_heads=n_heads, rng=rng)
+    gqa.W_Q = mha.W_Q
+    gqa.W_K = mha.W_K
+    gqa.W_V = mha.W_V
+    gqa.W_O = mha.W_O
+    assert np.allclose(gqa.forward(X), mha.forward(X)), "GQA with kv_heads == n_heads must match MHA"
+
+def test_grouped_query_attention_similar_to_mha_with_similar_weights(rng):
+    """If we take the GQA's K, V, Q weights, arrange/ repeat them into the right order and use them in MHA, outputs should be same or similar."""
+    d_model, n_heads, n_kv_heads, n = 8, 4, 2, 5
+    X = rng.standard_normal((n, d_model))
+    gqa = GroupedQueryAttention(d_model, n_heads=n_heads, n_kv_heads=n_kv_heads, rng=rng)
+    mha = MultiHeadAttention(d_model, n_heads=n_heads, rng=rng)
+
+    # Repeat GQA's K and V weights to fill MHA's K and V weights
+    # The repetition shouldn't be interleaved, but rather each GQA head's K and V weights should be repeated for the corresponding MHA heads.
+    d_head = d_model // n_heads
+    group = n_heads // n_kv_heads          # query heads per K/V head
+
+    # Build MHA's full-size K/V weights: query head h gets a copy of
+    # K/V head (h // group)'s columns -> order KV0, KV0, KV1, KV1
+    K_blocks, V_blocks = [], []
+    for h in range(n_heads):
+        kv = h // group
+        cols = slice(kv * d_head, (kv + 1) * d_head)
+        K_blocks.append(gqa.W_K[:, cols])
+        V_blocks.append(gqa.W_V[:, cols])
+
+    mha.W_Q = gqa.W_Q
+    mha.W_K = np.concatenate(K_blocks, axis=1)   # (d_model, n_heads * d_head) = (8, 8)
+    mha.W_V = np.concatenate(V_blocks, axis=1)
+    # mha.W_K = np.tile(gqa.W_K[:, :d_model // n_kv_heads], (1, n_heads // n_kv_heads))
+    # mha.W_V = np.tile(gqa.W_V[:, :d_model // n_kv_heads], (1, n_heads // n_kv_heads))
+    mha.W_O = gqa.W_O
+
+    out_gqa = gqa.forward(X)
+    out_mha = mha.forward(X)
+    
+    assert np.allclose(out_gqa, out_mha), "GQA output should be similar to MHA output with arranged weights"
