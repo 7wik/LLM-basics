@@ -28,10 +28,10 @@ ingredient changed, several seeds. See [Experiments](#experiments-what-does-each
 - [x] See the equivalence test fail (decode using local k/v instead of the cache)
 
 ### Attention variants (high priority, NumPy engine)
-Schedule: multi-head + GQA/MQA on 2026-11-20 (morning); the rest after E4.
+Schedule: multi-head + GQA/MQA done 2026-11-23 (planned 11-20); the rest after E4.
 Each variant gets a test against plain attention (same output, or the expected difference), and works with the KV cache.
-- [x] (2026-11-20) Multi-head attention: split -> attend per head -> concat -> `W_o`; KV cache stores `(n_heads, L, d_head)`
-- [x] (2026-11-20) Grouped-query / multi-query attention (GQA / MQA): several query heads share one K/V head; measure the cache shrink
+- [x] (2026-11-23) Multi-head attention: split -> attend per head -> concat -> `W_o`; KV cache stores `(n_heads, L, d_head)`
+- [x] (2026-11-23) Grouped-query / multi-query attention (GQA / MQA): several query heads share one K/V head; measure the cache shrink
 - [ ] RoPE positional encoding: rotate q/k by position; cached keys stay valid, decode uses position = cache length
 - [ ] Sliding-window attention: band mask in prefill, cache capped at the last W tokens in decode
 - [ ] FlashAttention-style tiling: blockwise attention with online softmax, never builds the `(n, n)` matrix; must match plain attention
@@ -96,7 +96,7 @@ Every result: matched parameter count, same training budget, mean ± std over 3 
 - [ ] Datasets: Tiny Shakespeare (character level) + synthetic tasks (associative recall, induction/copy, multi-digit addition)
 - [ ] Results table + loss-curve plots in `results/`
 
-### E1. Does attention help? (2026-11-20 afternoon: setup + bigram + MLP; 2026-11-21: transformer + results)
+### E1. Does attention help? (2026-11-24 to 11-26: setup + data + training harness, then bigram, MLP, transformer, results)
 - [x] Decide who writes the plumbing: Claude writes it in small steps, I read and review each step (with questions) before moving on
 - [ ] Install PyTorch
 - [ ] `experiments/data.py`: Tiny Shakespeare download, char tokenizer, batches, associative-recall generator
@@ -120,7 +120,7 @@ Every result: matched parameter count, same training budget, mean ± std over 3 
 - [ ] Small scaling curve: validation loss vs. parameters, and vs. amount of data
 - [ ] Pretrain on raw text, then fine-tune on a small task set vs. training on that task set from scratch (sample efficiency)
 
-### E4. Does RL with verifiable rewards (RLVR) help? (target: 2026-11-22) -- package `rlvr/`
+### E4. Does RL with verifiable rewards (RLVR) help? (2026-11-27 to 11-29) -- package `rlvr/`
 Every algorithm shares the same loop (sample k answers per prompt -> verify -> advantages -> update);
 they differ only in how advantages and the loss are computed, so each one is a small, testable function.
 
