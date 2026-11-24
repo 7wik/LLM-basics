@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from attention import SelfAttention
-from kv_cache import KVCache, decode, prefill
+from attention import GroupedQueryAttention, SelfAttention
+from kv_cache import KVCache, decode, prefill, prefill_gqa, decode_gqa
 
 D_MODEL = 8
 
@@ -134,15 +134,14 @@ def _naive_generate(attn, X_prompt, steps):
     return np.vstack(outs)
 
 
-def _cached_generate(attn, X_prompt, steps):
+def _cached_generate(attn, X_prompt, steps, cache, prefill_fn=prefill, decode_fn=decode):
     """Same loop with the KV cache: prefill once, then one decode per new token."""
-    cache = KVCache(D_MODEL)
-    out = prefill(attn, X_prompt, cache)[-1:]  # (1, d): output for the last prompt token
+    out = prefill_fn(attn, X_prompt, cache)[-1:]  # (1, d): output for the last prompt token
     outs = [out]
     for _ in range(steps - 1):
-        out = decode(attn, out, cache)         # feed the output back in
+        out = decode_fn(attn, out, cache)         # feed the output back in
         outs.append(out)
-    return np.vstack(outs), cache
+    return np.vstack(outs)
 
 
 @pytest.mark.parametrize("p", [1, 4])
@@ -152,12 +151,39 @@ def test_cached_generation_matches_naive_generation(rng, p):
     steps = 6
     attn = SelfAttention(D_MODEL, rng)
     X_prompt = rng.standard_normal((p, D_MODEL))
+    cache = KVCache(D_MODEL)
 
     naive = _naive_generate(attn, X_prompt, steps)
-    cached, cache = _cached_generate(attn, X_prompt, steps)
+    cached = _cached_generate(attn, X_prompt, steps, cache)
 
     assert naive.shape == cached.shape == (steps, D_MODEL)
     for t in range(steps):
         assert np.allclose(naive[t], cached[t]), f"step {t}: cached != naive"
     # prompt + every generated output except the last (which was never fed back in)
     assert len(cache) == p + steps - 1
+
+@pytest.mark.parametrize("n_heads, n_kv_heads", [(4, 4), (4, 2), (4, 1)])   # MHA, GQA, MQA
+@pytest.mark.parametrize("p", [1, 4])
+def test_cached_gqa_generation_matches_naive_generation(rng, p, n_heads, n_kv_heads):
+    """Autoregressive loop with GQA: the cached path must reproduce the naive
+    (recompute-everything) path step for step, and the cache must stay small."""
+    steps = 6
+    d_head = D_MODEL // n_heads
+    attn = GroupedQueryAttention(D_MODEL, n_heads=n_heads, n_kv_heads=n_kv_heads, rng=rng)
+    X_prompt = rng.standard_normal((p, D_MODEL))
+    cache = KVCache(d_head, n_kv_heads=n_kv_heads)          # cache stores head-width vectors
+
+    naive = _naive_generate(attn, X_prompt, steps)
+    cached = _cached_generate(attn, X_prompt, steps, cache,
+                              prefill_fn=prefill_gqa, decode_fn=decode_gqa)
+
+    assert naive.shape == cached.shape == (steps, D_MODEL)
+    for t in range(steps):
+        assert np.allclose(naive[t], cached[t]), f"step {t}: cached != naive"
+
+    # cache holds only n_kv_heads heads (not the repeated n_heads) -> the GQA saving
+    L = p + steps - 1
+    assert len(cache) == L
+    K, V = cache.get()
+    assert K.shape == V.shape == (n_kv_heads, L, d_head)
+

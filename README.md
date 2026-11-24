@@ -30,8 +30,8 @@ ingredient changed, several seeds. See [Experiments](#experiments-what-does-each
 ### Attention variants (high priority, NumPy engine)
 Schedule: multi-head + GQA/MQA on 2026-11-20 (morning); the rest after E4.
 Each variant gets a test against plain attention (same output, or the expected difference), and works with the KV cache.
-- [ ] (2026-11-20) Multi-head attention: split -> attend per head -> concat -> `W_o`; KV cache stores `(n_heads, L, d_head)`
-- [ ] (2026-11-20) Grouped-query / multi-query attention (GQA / MQA): several query heads share one K/V head; measure the cache shrink
+- [x] (2026-11-20) Multi-head attention: split -> attend per head -> concat -> `W_o`; KV cache stores `(n_heads, L, d_head)`
+- [x] (2026-11-20) Grouped-query / multi-query attention (GQA / MQA): several query heads share one K/V head; measure the cache shrink
 - [ ] RoPE positional encoding: rotate q/k by position; cached keys stay valid, decode uses position = cache length
 - [ ] Sliding-window attention: band mask in prefill, cache capped at the last W tokens in decode
 - [ ] FlashAttention-style tiling: blockwise attention with online softmax, never builds the `(n, n)` matrix; must match plain attention
